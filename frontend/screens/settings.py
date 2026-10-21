@@ -109,8 +109,8 @@ class SettingsScreen(Screen):
             )
         self.content.add_widget(
             AppLabel(
-                "Mobile Tracker · Android client 0.1.0 · Features beyond "
-                "authentication and connections require backend support.",
+                "Mobile Tracker · Android client 0.1.0 · Location capture and app "
+                "usage sync are manual; app blocking requires Android opt-in.",
                 size=11,
                 color=MUTED,
                 height=dp(46),

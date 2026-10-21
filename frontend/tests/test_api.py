@@ -96,6 +96,159 @@ class ApiClientTests(unittest.TestCase):
         self.assertEqual(json.loads(request.data), {"share_location": True})
         self.assertEqual(request.get_header("Authorization"), "Bearer test-token")
 
+    def test_location_upload_and_history_use_authenticated_api(self) -> None:
+        self.client.token = "test-token"
+        create_response = MagicMock()
+        create_response.__enter__.return_value = create_response
+        create_response.status = 201
+        create_response.read.return_value = (
+            b'{"id":3,"latitude":37.4,"longitude":-122.0,'
+            b'"accuracy_meters":8.0,"recorded_at":"2026-01-01T12:00:00+00:00"}'
+        )
+        history_response = MagicMock()
+        history_response.__enter__.return_value = history_response
+        history_response.status = 200
+        history_response.read.return_value = (
+            b'[{"id":3,"latitude":37.4,"longitude":-122.0,'
+            b'"accuracy_meters":8.0,"recorded_at":"2026-01-01T12:00:00+00:00"}]'
+        )
+
+        with patch(
+            "services.api.urlopen",
+            side_effect=[create_response, history_response],
+        ) as mocked_urlopen:
+            created = self.client.create_location(
+                37.4,
+                -122.0,
+                8.0,
+                "2026-01-01T12:00:00+00:00",
+            )
+            history = self.client.get_locations(limit=25)
+
+        self.assertEqual(created["id"], 3)
+        self.assertEqual(len(history), 1)
+        upload_request = mocked_urlopen.call_args_list[0].args[0]
+        history_request = mocked_urlopen.call_args_list[1].args[0]
+        self.assertEqual(upload_request.full_url, "http://127.0.0.1:8000/api/locations")
+        self.assertEqual(
+            json.loads(upload_request.data),
+            {
+                "latitude": 37.4,
+                "longitude": -122.0,
+                "accuracy_meters": 8.0,
+                "recorded_at": "2026-01-01T12:00:00+00:00",
+            },
+        )
+        self.assertEqual(
+            history_request.full_url,
+            "http://127.0.0.1:8000/api/locations/me?limit=25",
+        )
+        self.assertEqual(upload_request.get_header("Authorization"), "Bearer test-token")
+
+    def test_activity_and_restriction_data_use_real_api_responses(self) -> None:
+        events_response = MagicMock()
+        events_response.__enter__.return_value = events_response
+        events_response.status = 200
+        events_response.read.return_value = (
+            b'[{"id":1,"package_name":"org.example.app","app_name":"Example",'
+            b'"event_type":"opened","recorded_at":"2026-01-01T12:00:00+00:00"}]'
+        )
+        restrictions_response = MagicMock()
+        restrictions_response.__enter__.return_value = restrictions_response
+        restrictions_response.status = 200
+        restrictions_response.read.return_value = (
+            b'[{"id":2,"package_name":"org.example.app","app_name":"Example",'
+            b'"created_at":"2026-01-01T12:00:00+00:00"}]'
+        )
+
+        with patch(
+            "services.api.urlopen",
+            side_effect=[events_response, restrictions_response],
+        ) as mocked_urlopen:
+            events = self.client.get_activities(limit=20)
+            restrictions = self.client.update_restricted_apps(
+                [{"package_name": "org.example.app", "app_name": "Example"}]
+            )
+
+        self.assertEqual(events[0]["event_type"], "opened")
+        self.assertEqual(restrictions[0]["package_name"], "org.example.app")
+        self.assertEqual(
+            mocked_urlopen.call_args_list[0].args[0].full_url,
+            "http://127.0.0.1:8000/api/activities/me?limit=20",
+        )
+        request = mocked_urlopen.call_args_list[1].args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:8000/api/restrictions/me")
+        self.assertEqual(
+            json.loads(request.data),
+            {"apps": [{"package_name": "org.example.app", "app_name": "Example"}]},
+        )
+
+    def test_shared_feeds_and_restriction_alert_api(self) -> None:
+        self.client.token = "test-token"
+        location = (
+            b'[{"id":1,"latitude":37.4,"longitude":-122.0,'
+            b'"accuracy_meters":8.0,"recorded_at":"2026-01-01T12:00:00+00:00"}]'
+        )
+        activity = (
+            b'[{"id":2,"package_name":"org.example.app","app_name":"Example",'
+            b'"event_type":"opened","recorded_at":"2026-01-01T12:00:00+00:00"}]'
+        )
+        alert = (
+            b'{"id":3,"package_name":"org.example.app","app_name":"Example",'
+            b'"recorded_at":"2026-01-01T12:00:00+00:00"}'
+        )
+        shared_alert = (
+            b'[{"id":4,"package_name":"org.example.app","app_name":"Example",'
+            b'"recorded_at":"2026-01-01T12:00:00+00:00"}]'
+        )
+        responses = []
+        for body in (location, activity, alert, shared_alert):
+            response = MagicMock()
+            response.__enter__.return_value = response
+            response.status = 200
+            response.read.return_value = body
+            responses.append(response)
+
+        with patch(
+            "services.api.urlopen", side_effect=responses
+        ) as mocked_urlopen:
+            locations = self.client.get_shared_locations(12, limit=10)
+            activities = self.client.get_shared_activities(12, limit=10)
+            created_alert = self.client.create_restriction_alert(
+                "org.example.app",
+                "Example",
+                "2026-01-01T12:00:00+00:00",
+                "Blocked by owner rule",
+            )
+            alerts = self.client.get_shared_restriction_alerts(12, limit=10)
+
+        self.assertEqual(locations[0]["id"], 1)
+        self.assertEqual(activities[0]["id"], 2)
+        self.assertEqual(created_alert["id"], 3)
+        self.assertEqual(alerts[0]["id"], 4)
+        self.assertEqual(
+            [
+                call.args[0].full_url
+                for call in mocked_urlopen.call_args_list
+            ],
+            [
+                "http://127.0.0.1:8000/api/connections/12/locations?limit=10",
+                "http://127.0.0.1:8000/api/connections/12/activities?limit=10",
+                "http://127.0.0.1:8000/api/restrictions/alerts",
+                "http://127.0.0.1:8000/api/connections/12/restriction-alerts?limit=10",
+            ],
+        )
+        alert_request = mocked_urlopen.call_args_list[2].args[0]
+        self.assertEqual(
+            json.loads(alert_request.data),
+            {
+                "package_name": "org.example.app",
+                "app_name": "Example",
+                "recorded_at": "2026-01-01T12:00:00+00:00",
+                "details": "Blocked by owner rule",
+            },
+        )
+
     def test_signup_rejects_unexpected_server_response(self) -> None:
         response = MagicMock()
         response.__enter__.return_value = response

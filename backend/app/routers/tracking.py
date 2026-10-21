@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
@@ -83,7 +85,7 @@ def _prune_old_records(db: Session, model: type, owner_id: int) -> None:
         delete(model).where(
             model.owner_id == owner_id,
             model.recorded_at < cutoff,
-        )
+        ).execution_options(synchronize_session=False)
     )
 
 
@@ -118,6 +120,8 @@ def get_my_locations(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[LocationUpdate]:
+    _prune_old_records(db, LocationUpdate, current_user.id)
+    db.commit()
     statement = select(LocationUpdate).where(
         LocationUpdate.owner_id == current_user.id
     )
@@ -144,6 +148,8 @@ def get_shared_locations(
     db: Session = Depends(get_db),
 ) -> list[LocationUpdate]:
     owner_id = _shared_owner(db, connection_id, current_user.id, "location")
+    _prune_old_records(db, LocationUpdate, owner_id)
+    db.commit()
     statement = select(LocationUpdate).where(LocationUpdate.owner_id == owner_id)
     if before is not None:
         statement = statement.where(
@@ -166,16 +172,47 @@ def create_activity(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AppActivityEvent:
+    recorded_at = _ingestion_timestamp(data.recorded_at)
+    event_key = data.event_key or sha256(
+        "|".join(
+            (
+                data.package_name,
+                data.event_type,
+                recorded_at.isoformat(),
+            )
+        ).encode("utf-8")
+    ).hexdigest()
+    existing = db.scalar(
+        select(AppActivityEvent).where(
+            AppActivityEvent.owner_id == current_user.id,
+            AppActivityEvent.event_key == event_key,
+        )
+    )
+    if existing is not None:
+        return existing
     record = AppActivityEvent(
         owner_id=current_user.id,
         package_name=data.package_name,
         app_name=data.app_name.strip(),
         event_type=data.event_type,
-        recorded_at=_ingestion_timestamp(data.recorded_at),
+        recorded_at=recorded_at,
+        event_key=event_key,
     )
     db.add(record)
     _prune_old_records(db, AppActivityEvent, current_user.id)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(
+            select(AppActivityEvent).where(
+                AppActivityEvent.owner_id == current_user.id,
+                AppActivityEvent.event_key == event_key,
+            )
+        )
+        if existing is None:
+            raise
+        return existing
     db.refresh(record)
     return record
 
@@ -187,6 +224,8 @@ def get_my_activities(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[AppActivityEvent]:
+    _prune_old_records(db, AppActivityEvent, current_user.id)
+    db.commit()
     statement = select(AppActivityEvent).where(
         AppActivityEvent.owner_id == current_user.id
     )
@@ -213,6 +252,8 @@ def get_shared_activities(
     db: Session = Depends(get_db),
 ) -> list[AppActivityEvent]:
     owner_id = _shared_owner(db, connection_id, current_user.id, "app_usage")
+    _prune_old_records(db, AppActivityEvent, owner_id)
+    db.commit()
     statement = select(AppActivityEvent).where(
         AppActivityEvent.owner_id == owner_id
     )
@@ -303,6 +344,8 @@ def get_my_restriction_alerts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[RestrictionAlert]:
+    _prune_old_records(db, RestrictionAlert, current_user.id)
+    db.commit()
     statement = select(RestrictionAlert).where(
         RestrictionAlert.owner_id == current_user.id
     )
@@ -331,6 +374,8 @@ def get_shared_restriction_alerts(
     owner_id = _shared_owner(
         db, connection_id, current_user.id, "restriction_alerts"
     )
+    _prune_old_records(db, RestrictionAlert, owner_id)
+    db.commit()
     statement = select(RestrictionAlert).where(
         RestrictionAlert.owner_id == owner_id
     )

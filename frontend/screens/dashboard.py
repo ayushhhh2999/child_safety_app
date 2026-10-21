@@ -152,25 +152,31 @@ class DashboardScreen(Screen):
         )
         sharing.add_widget(
             AppLabel(
-                "These are server-side sharing consents. This app does not collect "
-                "location or app usage yet.",
+                "These are server-side consents for data you choose to record or "
+                "sync from this device.",
                 size=12,
                 color=MUTED,
             )
         )
         self.content.add_widget(sharing)
 
-        self._unavailable_card(
+        self._feature_card(
             "Location",
-            "No location endpoint or device location collector is configured. "
-            "No current position is being collected or displayed.",
+            "Record a one-time location only after tapping the capture button and "
+            "granting Android permission.",
             "locations",
         )
-        self._unavailable_card(
+        self._feature_card(
             "App activity",
-            "The backend has no app-activity endpoint. No usage timeline or "
-            "monitoring state is available.",
+            "Manually sync Android app foreground/background events after enabling "
+            "Usage Access.",
             "activity",
+        )
+        self._feature_card(
+            "Restricted apps",
+            "Select apps on this device. Blocking requires separately enabling "
+            "the Accessibility service in Android Settings.",
+            "restricted",
         )
         self.content.add_widget(
             AppButton(
@@ -188,7 +194,7 @@ class DashboardScreen(Screen):
             )
         )
 
-    def _unavailable_card(self, title: str, detail: str, screen_name: str) -> None:
+    def _feature_card(self, title: str, detail: str, screen_name: str) -> None:
         card = Card(size_hint_y=None, height=dp(116))
         card.add_widget(AppLabel(title, size=16, bold=True, height=dp(30)))
         card.add_widget(AppLabel(detail, size=12, color=MUTED, height=dp(50)))

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mobile_tracker_accessibility_description">Detects selected apps and returns the device to the home screen. Does not read screen contents.</string>
+</resources>

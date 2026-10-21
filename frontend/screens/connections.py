@@ -21,18 +21,17 @@ _PERMISSIONS = (
     (
         "Location",
         "share_location",
-        "Allows this connection to access your shared location when a "
-        "location feature is implemented.",
+        "Allows this connection to load location updates you record on this device.",
     ),
     (
         "App activity",
         "share_app_usage",
-        "Allows this connection to access shared app-usage events when available.",
+        "Allows this connection to load app-usage events you manually sync.",
     ),
     (
         "Restricted-app alerts",
         "share_restriction_alerts",
-        "Allows this connection to receive restriction alerts when supported.",
+        "Allows this connection to load alerts recorded by this device.",
     ),
     ("Pause sharing", "paused", "Temporarily disables all sharing for this connection."),
 )

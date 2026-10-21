@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -103,6 +103,23 @@ class TrackingApiTests(unittest.TestCase):
             [],
         )
 
+    def test_location_history_prunes_expired_records(self) -> None:
+        expired = LocationUpdate(
+            owner_id=self.owner.id,
+            latitude=37.4,
+            longitude=-122.0,
+            recorded_at=datetime.now(timezone.utc) - timedelta(days=31),
+        )
+        self.db.add(expired)
+        self.db.commit()
+        expired_id = expired.id
+
+        self.assertEqual(
+            get_my_locations(limit=50, current_user=self.owner, db=self.db),
+            [],
+        )
+        self.assertIsNone(self.db.get(LocationUpdate, expired_id))
+
     def test_location_share_requires_owner_consent_and_revokes_immediately(self) -> None:
         create_location(
             LocationCreate(latitude=37.4, longitude=-122.0),
@@ -154,15 +171,28 @@ class TrackingApiTests(unittest.TestCase):
         self.assertEqual(denied.exception.status_code, 404)
 
     def test_activity_round_trip_is_owner_scoped_and_consent_gated(self) -> None:
-        create_activity(
+        event_time = datetime.now(timezone.utc)
+        first = create_activity(
             ActivityCreate(
                 package_name="org.example.reader",
                 app_name="Reader",
                 event_type="opened",
+                recorded_at=event_time,
             ),
             current_user=self.owner,
             db=self.db,
         )
+        duplicate = create_activity(
+            ActivityCreate(
+                package_name="org.example.reader",
+                app_name="Reader",
+                event_type="opened",
+                recorded_at=event_time,
+            ),
+            current_user=self.owner,
+            db=self.db,
+        )
+        self.assertEqual(first.id, duplicate.id)
         self.assertEqual(
             len(get_my_activities(limit=50, current_user=self.owner, db=self.db)),
             1,

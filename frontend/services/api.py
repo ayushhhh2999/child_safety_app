@@ -1,3 +1,4 @@
+from hashlib import sha256
 import json
 import os
 import sys
@@ -309,3 +310,218 @@ class ApiClient:
 
     def disconnect(self, connection_id: int) -> None:
         self._request("DELETE", f"/api/connections/{connection_id}")
+
+    @classmethod
+    def _expect_location(cls, value: Any) -> dict[str, Any]:
+        location = cls._expect_object(
+            value,
+            {
+                "id": int,
+                "recorded_at": str,
+            },
+        )
+        if any(
+            isinstance(location.get(field), bool)
+            or not isinstance(location.get(field), (int, float))
+            for field in ("latitude", "longitude")
+        ):
+            raise ApiError("The API returned an unexpected location.")
+        accuracy = location.get("accuracy_meters")
+        if accuracy is not None and not isinstance(accuracy, (int, float)):
+            raise ApiError("The API returned an unexpected location.")
+        return location
+
+    @classmethod
+    def _expect_activity(cls, value: Any) -> dict[str, Any]:
+        event = cls._expect_object(
+            value,
+            {
+                "id": int,
+                "package_name": str,
+                "app_name": str,
+                "event_type": str,
+                "recorded_at": str,
+            },
+        )
+        if event["event_type"] not in ("opened", "closed"):
+            raise ApiError("The API returned an unexpected activity event.")
+        return event
+
+    def get_locations(self, limit: int = 50) -> list[dict[str, Any]]:
+        values = self._expect_list(
+            self._request("GET", "/api/locations/me", query={"limit": str(limit)})
+        )
+        return [self._expect_location(value) for value in values]
+
+    def get_shared_locations(
+        self, connection_id: int, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        values = self._expect_list(
+            self._request(
+                "GET",
+                f"/api/connections/{connection_id}/locations",
+                query={"limit": str(limit)},
+            )
+        )
+        return [self._expect_location(value) for value in values]
+
+    def create_location(
+        self,
+        latitude: float,
+        longitude: float,
+        accuracy_meters: float | None,
+        recorded_at: str,
+    ) -> dict[str, Any]:
+        result = self._request(
+            "POST",
+            "/api/locations",
+            {
+                "latitude": latitude,
+                "longitude": longitude,
+                "accuracy_meters": accuracy_meters,
+                "recorded_at": recorded_at,
+            },
+        )
+        return self._expect_location(result)
+
+    def get_activities(self, limit: int = 50) -> list[dict[str, Any]]:
+        values = self._expect_list(
+            self._request("GET", "/api/activities/me", query={"limit": str(limit)})
+        )
+        return [self._expect_activity(value) for value in values]
+
+    def get_shared_activities(
+        self, connection_id: int, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        values = self._expect_list(
+            self._request(
+                "GET",
+                f"/api/connections/{connection_id}/activities",
+                query={"limit": str(limit)},
+            )
+        )
+        return [self._expect_activity(value) for value in values]
+
+    def create_activity(
+        self,
+        package_name: str,
+        app_name: str,
+        event_type: str,
+        recorded_at: str,
+    ) -> dict[str, Any]:
+        event_key = sha256(
+            "|".join((package_name, event_type, recorded_at)).encode("utf-8")
+        ).hexdigest()
+        result = self._request(
+            "POST",
+            "/api/activities",
+            {
+                "package_name": package_name,
+                "app_name": app_name,
+                "event_type": event_type,
+                "recorded_at": recorded_at,
+                "event_key": event_key,
+            },
+        )
+        return self._expect_activity(result)
+
+    def get_restricted_apps(self) -> list[dict[str, Any]]:
+        values = self._expect_list(self._request("GET", "/api/restrictions/me"))
+        for value in values:
+            self._expect_object(
+                value,
+                {
+                    "id": int,
+                    "package_name": str,
+                    "app_name": str,
+                    "created_at": str,
+                },
+            )
+        return values
+
+    def update_restricted_apps(
+        self, apps: list[dict[str, str]]
+    ) -> list[dict[str, Any]]:
+        values = self._expect_list(
+            self._request("PUT", "/api/restrictions/me", {"apps": apps})
+        )
+        for value in values:
+            self._expect_object(
+                value,
+                {
+                    "id": int,
+                    "package_name": str,
+                    "app_name": str,
+                    "created_at": str,
+                },
+            )
+        return values
+
+    def get_restriction_alerts(self, limit: int = 50) -> list[dict[str, Any]]:
+        values = self._expect_list(
+            self._request(
+                "GET",
+                "/api/restrictions/alerts/me",
+                query={"limit": str(limit)},
+            )
+        )
+        for value in values:
+            self._expect_object(
+                value,
+                {
+                    "id": int,
+                    "package_name": str,
+                    "app_name": str,
+                    "recorded_at": str,
+                },
+            )
+        return values
+
+    def get_shared_restriction_alerts(
+        self, connection_id: int, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        values = self._expect_list(
+            self._request(
+                "GET",
+                f"/api/connections/{connection_id}/restriction-alerts",
+                query={"limit": str(limit)},
+            )
+        )
+        for value in values:
+            self._expect_object(
+                value,
+                {
+                    "id": int,
+                    "package_name": str,
+                    "app_name": str,
+                    "recorded_at": str,
+                },
+            )
+        return values
+
+    def create_restriction_alert(
+        self,
+        package_name: str,
+        app_name: str,
+        recorded_at: str,
+        details: str,
+    ) -> dict[str, Any]:
+        result = self._request(
+            "POST",
+            "/api/restrictions/alerts",
+            {
+                "package_name": package_name,
+                "app_name": app_name,
+                "recorded_at": recorded_at,
+                "details": details,
+            },
+        )
+        return self._expect_object(
+            result,
+            {
+                "id": int,
+                "package_name": str,
+                "app_name": str,
+                "recorded_at": str,
+            },
+        )

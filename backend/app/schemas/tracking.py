@@ -26,6 +26,12 @@ class ActivityCreate(BaseModel):
     app_name: str = Field(min_length=1, max_length=120)
     event_type: Literal["opened", "closed"]
     recorded_at: datetime | None = None
+    event_key: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+    )
 
 
 class ActivityResponse(BaseModel):
