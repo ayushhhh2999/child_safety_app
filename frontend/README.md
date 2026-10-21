@@ -72,6 +72,7 @@ $env:PYTHONPATH = (Get-Location).Path
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
+The Android build defaults to `https://child-safety-app-6s5b.onrender.com`.
 The desktop-only environment variable is a development override. The app's
 **Configure API server** screen also stores the URL in the app's private data
 directory. Use an HTTPS backend URL in an Android APK; this build intentionally
@@ -101,12 +102,24 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install buildozer cython==0.29.36
-buildozer android debug
+PIP_CONSTRAINT="$(pwd)/android-build-constraints.in" buildozer android debug
 ```
 
 Buildozer downloads and configures Android SDK/NDK components on the first
-build. The debug APK is written to `bin/`. Install it on a connected device
-using Android platform tools:
+build. This configuration targets Android API 35 and requires Android 7.0
+(API 24) or newer; Python 3.14's Android build uses native APIs unavailable on
+API 23. `android-build-constraints.in` pins the build environment's pip and
+`charset-normalizer` to versions compatible with the current
+Python-for-Android installer.
+
+Use this command to ensure the constraints apply to Buildozer's internal pip:
+
+```bash
+PIP_CONSTRAINT="$(pwd)/android-build-constraints.in" buildozer android debug
+```
+
+The debug APK is written to `bin/`. Install it on a connected device using
+Android platform tools:
 
 ```bash
 adb install -r bin/mobiletracker-0.1.0-arm64-v8a-debug.apk
@@ -114,9 +127,8 @@ adb install -r bin/mobiletracker-0.1.0-arm64-v8a-debug.apk
 
 Open **Configure API server** on first launch and provide a reachable HTTPS API
 URL. Test login, consent changes, and revoked access on a physical device. A
-successful Python test run is not evidence that the APK built or that Android
-background/device integrations work. Buildozer/APK compilation and physical
-device testing have not been performed as part of this change.
+successful Python test run is not evidence that Android background/device
+integrations work; these integrations are not implemented in this version.
 
 ## Session and token security
 
