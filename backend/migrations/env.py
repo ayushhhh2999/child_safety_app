@@ -7,6 +7,12 @@ from app.core.config import settings
 from app.database import Base, database_url
 from app.models.connection import Connection, SharingPermission
 from app.models.login_attempt import FailedLoginAttempt
+from app.models.tracking import (
+    AppActivityEvent,
+    LocationUpdate,
+    RestrictedApp,
+    RestrictionAlert,
+)
 from app.models.user import User
 
 
@@ -17,7 +23,16 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-_registered_models = (Connection, SharingPermission, FailedLoginAttempt, User)
+_registered_models = (
+    Connection,
+    SharingPermission,
+    FailedLoginAttempt,
+    AppActivityEvent,
+    LocationUpdate,
+    RestrictedApp,
+    RestrictionAlert,
+    User,
+)
 if any(
     target_metadata.tables.get(model.__tablename__) is not model.__table__
     for model in _registered_models
