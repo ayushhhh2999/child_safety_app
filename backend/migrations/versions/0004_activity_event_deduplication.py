@@ -1,6 +1,6 @@
 """Add stable keys to deduplicate synced activity events.
 
-Revision ID: 0004_activity_event_deduplication
+Revision ID: 0004_activity_event_dedup
 Revises: 0003_tracking_data
 """
 from alembic import op
@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from hashlib import sha256
 
 
-revision = "0004_activity_event_deduplication"
+revision = "0004_activity_event_dedup"
 down_revision = "0003_tracking_data"
 branch_labels = None
 depends_on = None

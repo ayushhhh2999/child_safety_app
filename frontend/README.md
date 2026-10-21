@@ -32,7 +32,7 @@ activity, alerts, or connection statistics are fabricated.
 ## Tracking permissions and backend deployment
 
 The backend must be deployed with the tracking router and both Alembic
-migrations, through revision `0004_activity_event_deduplication`, before these
+migrations, through revision `0004_activity_event_dedup`, before these
 screens can use the tracking endpoints. Deploying only the APK does not update
 the Render service or its database schema.
 
