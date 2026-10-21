@@ -1,10 +1,13 @@
 import json
 import os
+import socket
+import ssl
 import unittest
 from unittest.mock import MagicMock, Mock, patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
-from services.api import ApiClient, ApiError
+from api_config import DEFAULT_API_BASE_URL
+from services.api import ApiClient, ApiError, NETWORK_TIMEOUT_SECONDS
 
 
 class ApiClientTests(unittest.TestCase):
@@ -53,6 +56,125 @@ class ApiClientTests(unittest.TestCase):
             profile_request.get_header("Authorization"),
             "Bearer test-token",
         )
+        self.assertEqual(
+            mocked_urlopen.call_args_list[0].kwargs["timeout"],
+            NETWORK_TIMEOUT_SECONDS,
+        )
+        tls_context = mocked_urlopen.call_args_list[0].kwargs["context"]
+        self.assertTrue(tls_context.check_hostname)
+        self.assertEqual(tls_context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(tls_context.get_ca_certs())
+
+    def test_android_uses_production_url_instead_of_environment_or_saved_config(self) -> None:
+        with (
+            patch.object(ApiClient, "_is_android", return_value=True),
+            patch.dict(
+                os.environ,
+                {
+                    "API_BASE_URL": "http://127.0.0.1:8000",
+                    "MOBILE_TRACKER_API_URL": "https://old.example.test",
+                },
+            ),
+        ):
+            self.assertEqual(self.client._load_base_url(), DEFAULT_API_BASE_URL)
+
+    def test_android_rejects_a_different_api_host(self) -> None:
+        with patch.object(ApiClient, "_is_android", return_value=True):
+            with self.assertRaisesRegex(ValueError, DEFAULT_API_BASE_URL):
+                self.client.set_base_url("https://old.example.test")
+
+    def test_signup_uses_backend_route_and_expected_payload(self) -> None:
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.status = 201
+        response.read.return_value = (
+            b'{"id":4,"username":"alice","email":"alice@example.com"}'
+        )
+
+        with patch("services.api.urlopen", return_value=response) as mocked_urlopen:
+            user = self.client.signup(
+                "alice",
+                "alice@example.com",
+                "a-long-test-password",
+            )
+
+        request = mocked_urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:8000/api/auth/signup")
+        self.assertEqual(
+            json.loads(request.data),
+            {
+                "username": "alice",
+                "email": "alice@example.com",
+                "password": "a-long-test-password",
+            },
+        )
+        self.assertEqual(user["id"], 4)
+
+    def test_dns_failure_is_reported_and_logged_without_request_secrets(self) -> None:
+        failure = URLError(socket.gaierror("name lookup failed"))
+        with (
+            patch("services.api.urlopen", side_effect=failure),
+            self.assertLogs("services.api", level="WARNING") as captured,
+        ):
+            with self.assertRaises(ApiError) as raised:
+                self.client._request(
+                    "POST",
+                    "/api/auth/login",
+                    {"username": "alice", "password": "private-password"},
+                )
+
+        self.assertIn("resolve the API server name", str(raised.exception))
+        self.assertIn("gaierror", captured.output[0])
+        self.assertNotIn("private-password", "\n".join(captured.output))
+
+    def test_timeout_is_reported_as_a_timeout(self) -> None:
+        failure = URLError(socket.timeout("read timed out"))
+        with patch("services.api.urlopen", side_effect=failure):
+            with self.assertRaises(ApiError) as raised:
+                self.client._request("GET", "/health")
+
+        self.assertIn("timed out", str(raised.exception))
+
+    def test_invalid_json_is_reported_and_logged(self) -> None:
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.read.return_value = b"not-json"
+
+        with (
+            patch("services.api.urlopen", return_value=response),
+            self.assertLogs("services.api", level="WARNING") as captured,
+        ):
+            with self.assertRaisesRegex(ApiError, "invalid JSON"):
+                self.client._request("GET", "/health")
+
+        self.assertIn("method=GET path=/health", captured.output[0])
+
+    def test_http_error_logs_status_without_response_body_or_secrets(self) -> None:
+        error_body = MagicMock()
+        error_body.read.return_value = b'{"detail":"Invalid username or password"}'
+        error = HTTPError(
+            "https://example.test/api/auth/login",
+            401,
+            "Unauthorized",
+            {},
+            error_body,
+        )
+        with (
+            patch("services.api.urlopen", side_effect=error),
+            self.assertLogs("services.api", level="WARNING") as captured,
+        ):
+            with self.assertRaises(ApiError) as raised:
+                self.client._request(
+                    "POST",
+                    "/api/auth/login",
+                    {"username": "alice", "password": "private-password"},
+                )
+
+        self.assertEqual(raised.exception.status_code, 401)
+        self.assertIn("status=401", captured.output[0])
+        self.assertNotIn("private-password", "\n".join(captured.output))
+        self.assertNotIn("Invalid username or password", "\n".join(captured.output))
 
     def test_failed_profile_request_clears_token(self) -> None:
         token_response = MagicMock()

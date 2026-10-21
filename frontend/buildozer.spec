@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py,kv,png,jpg,atlas,txt
 source.exclude_dirs = .venv,.buildozer,bin,tests
 version = 0.1.0
-requirements = python3,kivy==2.3.1,pyjnius
+requirements = python3,kivy==2.3.1,pyjnius,certifi==2026.10.19
 orientation = portrait
 fullscreen = 0
 
@@ -18,6 +18,8 @@ android.allow_backup = False
 android.add_src = android_src
 android.add_resources = android_res
 android.extra_manifest_xml = android_manifest.xml
+android.add_aars = android_aars/restriction-service-manifest.aar
+android.add_gradle_repositories = flatDir { dirs 'libs' }
 
 [buildozer]
 log_level = 2

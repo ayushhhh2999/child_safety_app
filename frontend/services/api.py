@@ -1,12 +1,23 @@
 from hashlib import sha256
 import json
+import logging
 import os
+import socket
+import ssl
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
+
+import certifi
+
+from api_config import DEFAULT_API_BASE_URL
+
+
+logger = logging.getLogger(__name__)
+NETWORK_TIMEOUT_SECONDS = 20
 
 
 class ApiError(Exception):
@@ -35,6 +46,9 @@ class ApiClient:
         return url
 
     def _load_base_url(self) -> str:
+        if self._is_android():
+            return self._normalize_base_url(DEFAULT_API_BASE_URL)
+
         configured = (
             os.environ.get("API_BASE_URL")
             or os.environ.get("MOBILE_TRACKER_API_URL")
@@ -63,8 +77,8 @@ class ApiClient:
 
     def set_base_url(self, value: str) -> None:
         normalized = self._normalize_base_url(value)
-        if self._is_android() and not normalized.startswith("https://"):
-            raise ValueError("Android API URLs must use HTTPS.")
+        if self._is_android() and normalized != DEFAULT_API_BASE_URL:
+            raise ValueError(f"This Android build uses {DEFAULT_API_BASE_URL}.")
         from kivy.app import App
 
         app = App.get_running_app()
@@ -148,8 +162,13 @@ class ApiClient:
             headers["Authorization"] = f"Bearer {self.token}"
 
         request = Request(url, data=body, headers=headers, method=method)
+        tls_context = ssl.create_default_context(cafile=certifi.where())
         try:
-            with urlopen(request, timeout=15) as response:
+            with urlopen(
+                request,
+                timeout=NETWORK_TIMEOUT_SECONDS,
+                context=tls_context,
+            ) as response:
                 if response.status == 204:
                     return None
                 response_body = response.read()
@@ -157,9 +176,21 @@ class ApiClient:
                     return None
                 try:
                     return json.loads(response_body)
-                except json.JSONDecodeError as error:
+                except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                    logger.warning(
+                        "API returned invalid JSON method=%s path=%s error=%s",
+                        method,
+                        path,
+                        type(error).__name__,
+                    )
                     raise ApiError("The API returned invalid JSON.") from error
         except HTTPError as error:
+            logger.warning(
+                "API returned HTTP error method=%s path=%s status=%s",
+                method,
+                path,
+                error.code,
+            )
             if error.code == 401 and self.token:
                 self.logout()
                 if self.on_unauthorized:
@@ -167,15 +198,64 @@ class ApiClient:
             try:
                 details = json.loads(error.read())
                 message = details.get("detail", "The server rejected the request.")
-            except (json.JSONDecodeError, AttributeError):
+            except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
                 message = "The server rejected the request."
-            raise ApiError(f"{error.code}: {message}", status_code=error.code) from error
-        except URLError as error:
             raise ApiError(
-                "Could not reach the API. Check the API URL and network connection."
+                f"{error.code}: {message}",
+                status_code=error.code,
             ) from error
-        except TimeoutError as error:
-            raise ApiError("The API request timed out.") from error
+        except URLError as error:
+            reason = error.reason
+            if isinstance(reason, socket.gaierror):
+                message = (
+                    "Could not resolve the API server name. "
+                    "Check your network or DNS."
+                )
+            elif isinstance(reason, (TimeoutError, socket.timeout)):
+                message = "The API connection timed out. Please try again."
+            elif isinstance(reason, ssl.SSLError):
+                message = "Could not establish a secure connection to the API."
+            elif isinstance(reason, ConnectionError):
+                message = "Could not connect to the API server."
+            else:
+                message = "Could not reach the API. Check the network connection."
+            logger.warning(
+                "API network failure method=%s path=%s cause=%s details=%s",
+                method,
+                path,
+                type(reason).__name__,
+                reason,
+            )
+            raise ApiError(message) from error
+        except (socket.gaierror, ssl.SSLError, ConnectionError) as error:
+            if isinstance(error, socket.gaierror):
+                message = (
+                    "Could not resolve the API server name. "
+                    "Check your network or DNS."
+                )
+            elif isinstance(error, ssl.SSLError):
+                message = "Could not establish a secure connection to the API."
+            else:
+                message = "Could not connect to the API server."
+            logger.warning(
+                "API network failure method=%s path=%s cause=%s details=%s",
+                method,
+                path,
+                type(error).__name__,
+                error,
+            )
+            raise ApiError(message) from error
+        except (TimeoutError, socket.timeout) as error:
+            logger.warning(
+                "API timeout method=%s path=%s timeout_seconds=%s cause=%s",
+                method,
+                path,
+                NETWORK_TIMEOUT_SECONDS,
+                type(error).__name__,
+            )
+            raise ApiError(
+                "The API connection timed out. Please try again."
+            ) from error
 
     def signup(self, username: str, email: str, password: str) -> dict[str, Any]:
         result = self._request(
