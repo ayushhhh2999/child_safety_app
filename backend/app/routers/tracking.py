@@ -79,6 +79,17 @@ def _shared_owner(
     return owner_id
 
 
+def require_shared_tracking_access(category: str):
+    def dependency(
+        connection_id: int,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> int:
+        return _shared_owner(db, connection_id, current_user.id, category)
+
+    return dependency
+
+
 def _prune_old_records(db: Session, model: type, owner_id: int) -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(days=_RETENTION_DAYS)
     db.execute(
