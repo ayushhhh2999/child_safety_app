@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Mobile Tracker Frontend",
+			"type": "shell",
+			"command": "C:\\Users\\ayush\\Desktop\\development\\mobile_tracker_app\\frontend\\.venv\\Scripts\\python.exe",
+			"args": [
+				"frontend\\main.py"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}
